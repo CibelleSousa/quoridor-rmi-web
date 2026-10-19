@@ -176,7 +176,7 @@ export default function QuoridorRMIPage() {
                     <span>
                       P{idx + 1} {isMe && <strong className="you-tag">(Você)</strong>}
                     </span>
-                    {p && <span className={`pawn-badge pawn-${p.color}`}>{p.color}</span>}
+                    {p && <span className={`pawn-badge pawn-${p.color}`} title={`Peão ${p.color}`} />}
                   </div>
                   <p className="player-name">{p ? p.name : 'Aguardando...'}</p>
                   {p && (
@@ -216,13 +216,7 @@ export default function QuoridorRMIPage() {
             </span>
             <button
               onClick={() => setErrorMsg(null)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#fecaca',
-                textDecoration: 'underline',
-                cursor: 'pointer',
-              }}
+              className="error-close"
             >
               Fechar
             </button>
@@ -233,14 +227,14 @@ export default function QuoridorRMIPage() {
         <div className="card board-card">
           <div className="board-status">
             {gameState?.status === 'WAITING_PLAYERS' && (
-              <p style={{ color: 'var(--amber)', fontWeight: 600 }}>
+              <p className="status-waiting">
                 ⏳ Aguardando os 4 processos clientes entrarem ({gameState.players.length}/4)...
               </p>
             )}
             {gameState?.status === 'IN_PROGRESS' && (
               <p>
                 {isMyTurn ? (
-                  <span style={{ color: 'var(--emerald)', fontWeight: 700 }}>
+                  <span className="status-myturn">
                     🎯 É a sua vez! Escolha mover seu peão ou posicionar uma barreira:
                   </span>
                 ) : (
@@ -252,8 +246,8 @@ export default function QuoridorRMIPage() {
               </p>
             )}
             {gameState?.status === 'FINISHED' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
-                <p style={{ color: 'var(--emerald)', fontWeight: 800, fontSize: '1.1rem' }}>
+              <div className="status-finished">
+                <p className="status-winner">
                   🏆 Vitória de {gameState.winner?.name} (Peão {gameState.winner?.color})!
                 </p>
                 <button onClick={handleResetGame} className="btn-secondary">
@@ -314,8 +308,16 @@ export default function QuoridorRMIPage() {
                         title={`Casa (${rIdx + 1}, ${cIdx + 1})`}
                       >
                         {occupant && (
-                          <div className={`pawn-piece pawn-${occupant.color}`}>
-                            {occupant.color}
+                          <div
+                            className={`pawn-piece pawn-${occupant.color}`}
+                            aria-label={`Peão ${occupant.color} de ${occupant.name}`}
+                          >
+                            {occupant.color !== 'N' && (
+                              <>
+                                <span className="ghost-eye left" />
+                                <span className="ghost-eye right" />
+                              </>
+                            )}
                           </div>
                         )}
                       </button>
