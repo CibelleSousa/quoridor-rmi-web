@@ -223,8 +223,45 @@ stateDiagram-v2
   obstáculo físico, mas seus turnos são pulados e a partida segue com os restantes.
 - **Vitória por W.O.** — se sobrar apenas 1 jogador ativo, ele é declarado vencedor.
 
-> 🔍 Os tempos ficam no topo de `src/GameEngine.ts` (`MICRO_DROP_TIMEOUT_MS` e
-> `ABANDON_WINDOW_MS`) caso queira acelerar a demonstração desse comportamento.
+### Como o jogador volta
+
+A identidade do cliente (`playerId`) vive no `sessionStorage`, que é isolado por aba. Recarregar
+a página (F5) reconecta sozinho. Mas **fechar a aba apaga essa identidade** — e aí o jogador
+precisaria de outra forma de provar quem é.
+
+Para isso o cliente usa o próprio estado publicado pelo servidor: ao abrir o link da sala sem
+identidade, ele lista os assentos que estão `OFFLINE` e oferece **"Reconectar como ..."**, que
+invoca `rejoinGame(roomId, playerId)`. Isso permite retomar a partida de outra aba, de outro
+navegador ou até de outra máquina — o que é o comportamento esperado quando o processo cliente
+de um nó falha e precisa ser reinstanciado em outro lugar.
+
+### ⚡ Modo demonstração
+
+Os prazos padrão são deliberadamente generosos: um detector de falhas por temporização precisa
+de folga para não confundir lentidão com falha. O problema é que isso torna o comportamento
+tedioso de demonstrar — são 2min30 encarando a tela para ver o ciclo completo.
+
+Para apresentar, suba o servidor assim:
+
+```bash
+npm run demo        # em vez de npm run dev
+```
+
+Os prazos caem para **8s** (desconexão) e **12s** (abandono), e o ciclo inteiro acontece em
+pouco mais de 20 segundos. O servidor deixa isso explícito ao iniciar:
+
+```
+⚡ MODO DEMONSTRAÇÃO ativo: desconexão em 8s, abandono em +12s
+```
+
+É exatamente a mesma lógica de detecção — apenas constantes diferentes, definidas em
+`src/Config.ts`. Optou-se por uma flag de linha de comando em vez de variável de ambiente
+porque a sintaxe de variáveis difere entre bash, cmd e PowerShell, enquanto um script npm
+funciona igual nos três sistemas.
+
+> ⚠️ Use o modo demonstração apenas para apresentar. Com 4 abas numa mesma janela, o navegador
+> estrangula os temporizadores das abas ocultas, e prazos curtos podem derrubar jogadores que
+> na verdade estão saudáveis. Para jogar de verdade, prefira `npm run dev` e janelas separadas.
 
 ---
 
@@ -304,8 +341,11 @@ Documentadas por honestidade técnica — são consequências deliberadas do esc
 - **Custo do polling.** Request/reply implica consultas periódicas, o que gera mais tráfego que
   um modelo *push*. É o preço do paradigma exigido pelo enunciado — e o que viabilizou o
   heartbeat sem custo extra.
-- **Sem autenticação.** Qualquer pessoa com o link entra na sala. Não há identidade persistente
-  entre sessões além do `playerId` guardado localmente no navegador.
+- **Sem autenticação.** Qualquer pessoa com o link entra na sala. Como consequência direta, a
+  retomada de sessão descrita acima aceita que qualquer cliente reivindique um assento que
+  esteja `OFFLINE` — não há prova de identidade. Em um sistema real isso exigiria um token de
+  sessão assinado; aqui a simplicidade foi preferida, já que autenticação não faz parte do
+  escopo de um trabalho sobre RMI.
 
 ---
 
