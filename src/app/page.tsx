@@ -1,394 +1,187 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { RMIClientManager } from './rmi/ClientStub';
-import {
-  GameState,
-  IGameRemote,
-  Player,
-  RMILogEntry,
-  WallOrientation,
-} from './rmi/IGameRemote';
+import type { IGameRemote, RoomInfo } from './rmi/IGameRemote';
 
 const SERVER_URL = process.env.NEXT_PUBLIC_RMI_SERVER_URL || 'http://localhost:4000';
 
-/**
- * Rótulos explicativos dos objetivos de cada ponto cardeal no Quoridor.
- */
-const GOAL_LABELS: Record<string, string> = {
-  N: 'Meta: Linha 9 (Base ↓)',
-  S: 'Meta: Linha 1 (Topo ↑)',
-  W: 'Meta: Coluna 9 (Dir →)',
-  E: 'Meta: Coluna 1 (Esq ←)',
+const STATUS_LABELS: Record<string, string> = {
+    WAITING_PLAYERS: 'AGUARDANDO',
+    IN_PROGRESS: 'EM JOGO',
+    FINISHED: 'FINALIZADA',
+    PAUSED_DISCONNECT: 'PAUSADA',
 };
 
-/**
- * Componente Principal do Cliente Distribuído de Quoridor (4 Jogadores).
- * Consome os métodos do servidor exclusivamente através do Apêndice do Cliente (`IGameRemote`).
- */
-export default function QuoridorRMIPage() {
-  const [connected, setConnected] = useState(false);
-  const [gameState, setGameState] = useState<GameState | null>(null);
-  const [myPlayer, setMyPlayer] = useState<Player | null>(null);
-  const [playerNameInput, setPlayerNameInput] = useState('');
-  const [actionMode, setActionMode] = useState<'MOVE' | 'WALL_H' | 'WALL_V'>('MOVE');
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [logs, setLogs] = useState<RMILogEntry[]>([]);
+export default function Lobby() {
+    const router = useRouter();
+    const stubRef = useRef<IGameRemote | null>(null);
+    const creatingRef = useRef(false);
 
-  const gameStubRef = useRef<IGameRemote | null>(null);
+    const [rooms, setRooms] = useState<RoomInfo[]>([]);
+    const [roomName, setRoomName] = useState('');
+    const [connected, setConnected] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [creating, setCreating] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const manager = new RMIClientManager(
-      SERVER_URL,
-      (newLog) => setLogs((prev) => [newLog, ...prev.slice(0, 49)]),
-      (isOnline) => setConnected(isOnline)
-    );
+    useEffect(() => {
+        let active = true;
+        let timer: NodeJS.Timeout | undefined;
 
-    const stub = manager.getRemoteStub();
-    gameStubRef.current = stub;
+        const manager = new RMIClientManager(
+            SERVER_URL,
+            () => {},
+            (online) => {
+                if (active) setConnected(online);
+            }
+        );
 
-    // Sincronização periódica de estado via invocação remota de getGameState() (Sem uso de Sockets)
-    const fetchState = async () => {
-      try {
-        const state = await stub.getGameState();
-        setGameState(state);
-      } catch {
-        // Silencia falhas de rede temporárias durante o polling
-      }
-    };
+        const stub = manager.getRemoteStub();
+        stubRef.current = stub;
 
-    fetchState();
-    const interval = setInterval(fetchState, 600);
-    return () => clearInterval(interval);
-  }, []);
+        async function pollRooms() {
+            try {
+                const result = await stub.listRooms();
+                if (active) {
+                    setRooms(result);
+                    setError(null);
+                }
+            } catch (cause: unknown) {
+                if (active) {
+                    setError(cause instanceof Error ? cause.message : 'Não foi possível consultar as salas.');
+                }
+            } finally {
+                if (active) {
+                    setLoading(false);
+                    timer = setTimeout(pollRooms, 1500);
+                }
+            }
+        }
 
-  /**
-   * Invoca o método remoto `joinGame(playerName)` através do Client Stub.
-   */
-  const handleJoinGame = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!gameStubRef.current) return;
-    setErrorMsg(null);
-    try {
-      const { player, state } = await gameStubRef.current.joinGame(playerNameInput);
-      setMyPlayer(player);
-      setGameState(state);
-    } catch (err: any) {
-      setErrorMsg(err.message);
+        void pollRooms();
+
+        return () => {
+            active = false;
+            if (timer !== undefined) clearTimeout(timer);
+            if (stubRef.current === stub) stubRef.current = null;
+        };
+    }, []);
+
+    async function handleCreateRoom(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+
+        const stub = stubRef.current;
+        const name = roomName.trim();
+
+        if (!stub || !name || creatingRef.current) return;
+
+        creatingRef.current = true;
+        setCreating(true);
+        setError(null);
+
+        try {
+            // Invoca createRoom no servidor RMI
+            const newRoomId = await stub.createRoom(name);
+            // Redireciona para a página da sala usando o Next.js Router
+            router.push(`/partida/${newRoomId}`);
+        } catch (cause: unknown) {
+            setError(cause instanceof Error ? cause.message : 'Não foi possível criar a sala.');
+        } finally {
+            creatingRef.current = false;
+            setCreating(false);
+        }
     }
-  };
 
-  /**
-   * Invoca o método remoto `movePawn(playerId, row, col)` através do Client Stub.
-   */
-  const handleCellClick = async (row: number, col: number) => {
-    if (!gameStubRef.current || !myPlayer) {
-      setErrorMsg('Entre na partida primeiro para movimentar seu peão!');
-      return;
-    }
-    setErrorMsg(null);
-    try {
-      const updatedState = await gameStubRef.current.movePawn(myPlayer.id, row, col);
-      setGameState(updatedState);
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    }
-  };
+    return (
+        <main className="arcade-lobby">
+            <header className="lobby-header">
+                <p className="lobby-eyebrow">1UP · MULTIPLAYER</p>
+                <h1 className="lobby-title">QUORIDOR</h1>
+                <p className="lobby-caption">SISTEMAS DISTRIBUÍDOS · RMI</p>
 
-  /**
-   * Invoca o método remoto `placeWall(playerId, row, col, orientation)` através do Client Stub.
-   */
-  const handlePlaceWall = async (
-    row: number,
-    col: number,
-    orientation: WallOrientation
-  ) => {
-    if (!gameStubRef.current || !myPlayer) {
-      setErrorMsg('Entre na partida primeiro para posicionar barreiras!');
-      return;
-    }
-    setErrorMsg(null);
-    try {
-      const updatedState = await gameStubRef.current.placeWall(
-        myPlayer.id,
-        row,
-        col,
-        orientation
-      );
-      setGameState(updatedState);
-      setActionMode('MOVE'); // Volta automaticamente para o modo de mover após colocar parede
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    }
-  };
-
-  /**
-   * Invoca o método remoto `resetGame()` através do Client Stub.
-   */
-  const handleResetGame = async () => {
-    if (!gameStubRef.current) return;
-    setErrorMsg(null);
-    try {
-      const resetState = await gameStubRef.current.resetGame();
-      setGameState(resetState);
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    }
-  };
-
-  const currentTurnPlayer = gameState?.players[gameState.currentTurnIndex];
-  const isMyTurn =
-    gameState?.status === 'IN_PROGRESS' &&
-    myPlayer &&
-    currentTurnPlayer?.id === myPlayer.id;
-
-  const syncedMyPlayer = gameState?.players.find((p) => p.id === myPlayer?.id);
-
-  return (
-    <main className="main-container">
-      {/* COLUNA ESQUERDA: TABULEIRO 9x9 DO QUORIDOR */}
-      <div className="left-column">
-        <div className="card">
-          <div className="header-top">
-            <div>
-              <h1 className="title-gradient">Quoridor 4 Jogadores Distribuído (RMI)</h1>
-              <p className="subtitle">
-                Tabuleiro 9x9 • Vence quem cruzar o tabuleiro até a borda oposta primeiro
-              </p>
-            </div>
-            <div className="status-badge">
-              <span className={`status-dot ${connected ? 'dot-online' : 'dot-offline'}`} />
-              {connected ? 'RMI Server Online' : 'Desconectado'}
-            </div>
-          </div>
-
-          {/* Cartões dos 4 Jogadores Remotos */}
-          <div className="players-grid">
-            {[0, 1, 2, 3].map((idx) => {
-              const p = gameState?.players[idx];
-              const isTurn =
-                gameState?.status === 'IN_PROGRESS' && gameState.currentTurnIndex === idx;
-              const isMe = myPlayer && p?.id === myPlayer.id;
-
-              return (
-                <div key={idx} className={`player-card ${isTurn ? 'active-turn' : ''}`}>
-                  <div className="player-card-header">
-                    <span>
-                      P{idx + 1} {isMe && <strong className="you-tag">(Você)</strong>}
-                    </span>
-                    {p && <span className={`pawn-badge pawn-${p.color}`} title={`Peão ${p.color}`} />}
-                  </div>
-                  <p className="player-name">{p ? p.name : 'Aguardando...'}</p>
-                  {p && (
-                    <div className="player-meta">
-                      <span>🧱 {p.wallsRemaining} paredes</span>
-                      <span>{GOAL_LABELS[p.color]}</span>
-                    </div>
-                  )}
+                <div className="status-badge">
+                    <span className={`status-dot ${connected ? 'dot-online' : 'dot-offline'}`} />
+                    {connected ? 'RMI REGISTRY ONLINE' : 'DESCONECTADO'}
                 </div>
-              );
-            })}
-          </div>
+            </header>
 
-          {/* Formulário para invocar joinGame() */}
-          {!myPlayer && gameState && gameState.players.length < 4 && (
-            <form onSubmit={handleJoinGame} className="join-form">
-              <input
-                type="text"
-                placeholder="Seu nome para invocar joinGame()..."
-                value={playerNameInput}
-                onChange={(e) => setPlayerNameInput(e.target.value)}
-                className="join-input"
-                required
-              />
-              <button type="submit" className="btn-primary">
-                Entrar ({gameState.players.length}/4)
-              </button>
-            </form>
-          )}
-        </div>
+            <section className="lobby-rooms">
+                <div className="lobby-section-heading">
+                    <h2>SELECIONE UMA SALA</h2>
+                    <span>{rooms.length} SALAS</span>
+                </div>
 
-        {/* Alerta de Exceções Remotas */}
-        {errorMsg && (
-          <div className="error-banner">
-            <span>
-              ⚠️ <strong>Exceção RMI:</strong> {errorMsg}
-            </span>
-            <button
-              onClick={() => setErrorMsg(null)}
-              className="error-close"
-            >
-              Fechar
-            </button>
-          </div>
-        )}
+                {error && <p className="lobby-error">{error}</p>}
 
-        {/* Área do Tabuleiro 9x9 */}
-        <div className="card board-card">
-          <div className="board-status">
-            {gameState?.status === 'WAITING_PLAYERS' && (
-              <p className="status-waiting">
-                ⏳ Aguardando os 4 processos clientes entrarem ({gameState.players.length}/4)...
-              </p>
-            )}
-            {gameState?.status === 'IN_PROGRESS' && (
-              <p>
-                {isMyTurn ? (
-                  <span className="status-myturn">
-                    🎯 É a sua vez! Escolha mover seu peão ou posicionar uma barreira:
-                  </span>
-                ) : (
-                  <span>
-                    Turno atual: <strong>{currentTurnPlayer?.name}</strong> (Peão{' '}
-                    {currentTurnPlayer?.color})
-                  </span>
-                )}
-              </p>
-            )}
-            {gameState?.status === 'FINISHED' && (
-              <div className="status-finished">
-                <p className="status-winner">
-                  🏆 Vitória de {gameState.winner?.name} (Peão {gameState.winner?.color})!
-                </p>
-                <button onClick={handleResetGame} className="btn-secondary">
-                  🔄 Invocar resetGame()
-                </button>
-              </div>
-            )}
-            <p className="last-action-text">{gameState?.lastActionDescription}</p>
-          </div>
-
-          {/* Seletor de Modo de Ação (Exibido no turno do jogador) */}
-          {isMyTurn && (
-            <div className="action-toolbar">
-              <button
-                onClick={() => setActionMode('MOVE')}
-                className={`btn-secondary ${actionMode === 'MOVE' ? 'active-mode' : ''}`}
-              >
-                🏃 Mover Peão (movePawn)
-              </button>
-              <button
-                onClick={() => setActionMode('WALL_H')}
-                disabled={(syncedMyPlayer?.wallsRemaining ?? 0) <= 0}
-                className={`btn-secondary ${actionMode === 'WALL_H' ? 'active-mode' : ''}`}
-              >
-                ➖ Parede Horizontal ({syncedMyPlayer?.wallsRemaining})
-              </button>
-              <button
-                onClick={() => setActionMode('WALL_V')}
-                disabled={(syncedMyPlayer?.wallsRemaining ?? 0) <= 0}
-                className={`btn-secondary ${actionMode === 'WALL_V' ? 'active-mode' : ''}`}
-              >
-                ➕ Parede Vertical ({syncedMyPlayer?.wallsRemaining})
-              </button>
-            </div>
-          )}
-
-          {/* Grid 9x9 do Quoridor com frestas para Paredes */}
-          <div className="quoridor-board-wrapper">
-            <div className="quoridor-grid">
-              {Array.from({ length: 9 }).map((_, rIdx) =>
-                Array.from({ length: 9 }).map((__, cIdx) => {
-                  const occupant = gameState?.players.find(
-                    (p) => p.row === rIdx && p.col === cIdx
-                  );
-                  const hasHWall = gameState?.walls.some(
-                    (w) => w.orientation === 'H' && w.row === rIdx && w.col === cIdx
-                  );
-                  const hasVWall = gameState?.walls.some(
-                    (w) => w.orientation === 'V' && w.row === rIdx && w.col === cIdx
-                  );
-
-                  return (
-                    <div key={`${rIdx}-${cIdx}`} className="q-cell-wrapper">
-                      <button
-                        className="q-cell"
-                        disabled={!isMyTurn || actionMode !== 'MOVE'}
-                        onClick={() => handleCellClick(rIdx, cIdx)}
-                        title={`Casa (${rIdx + 1}, ${cIdx + 1})`}
-                      >
-                        {occupant && (
-                          <div
-                            className={`pawn-piece pawn-${occupant.color}`}
-                            aria-label={`Peão ${occupant.color} de ${occupant.name}`}
-                          >
-                            {occupant.color !== 'N' && (
-                              <>
-                                <span className="ghost-eye left" />
-                                <span className="ghost-eye right" />
-                              </>
+                <div className="lobby-table-scroll" aria-busy={loading}>
+                    <table className="lobby-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">RANK</th>
+                                <th scope="col">SALA</th>
+                                <th scope="col">LOTAÇÃO</th>
+                                <th scope="col">STATUS</th>
+                                <th scope="col">AÇÃO</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rooms.map((room, index) => (
+                                <tr key={room.roomId}>
+                                    <td className="lobby-rank">{String(index + 1).padStart(2, '0')}</td>
+                                    <th scope="row" className="lobby-room-name">
+                                        <Link className="lobby-room-link" href={`/partida/${room.roomId}`}>
+                                            {room.name}
+                                        </Link>
+                                    </th>
+                                    <td>{room.playersCount}/4</td>
+                                    <td>
+                                        <span className={`lobby-status lobby-status-${room.status}`}>
+                                            {STATUS_LABELS[room.status] ?? room.status}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <Link className="lobby-enter" href={`/partida/${room.roomId}`}>
+                                            ▶
+                                        </Link>
+                                    </td>
+                                </tr>
+                            ))}
+                            {rooms.length === 0 && (
+                                <tr>
+                                    <td colSpan={5} className="lobby-empty">
+                                        {loading ? 'CARREGANDO SALAS...' : 'NENHUMA SALA DISPONÍVEL'}
+                                    </td>
+                                </tr>
                             )}
-                          </div>
-                        )}
-                      </button>
-
-                      {/* Paredes já posicionadas no tabuleiro */}
-                      {hasHWall && <div className="wall-placed-h" />}
-                      {hasVWall && <div className="wall-placed-v" />}
-
-                      {/* Slots interativos para posicionar novas paredes (0 <= r, c <= 7) */}
-                      {isMyTurn && actionMode === 'WALL_H' && rIdx < 8 && cIdx < 8 && !hasHWall && (
-                        <div
-                          className="wall-slot-h"
-                          onClick={() => handlePlaceWall(rIdx, cIdx, 'H')}
-                          title={`Posicionar parede Horizontal em (${rIdx + 1}, ${cIdx + 1})`}
-                        />
-                      )}
-                      {isMyTurn && actionMode === 'WALL_V' && rIdx < 8 && cIdx < 8 && !hasVWall && (
-                        <div
-                          className="wall-slot-v"
-                          onClick={() => handlePlaceWall(rIdx, cIdx, 'V')}
-                          title={`Posicionar parede Vertical em (${rIdx + 1}, ${cIdx + 1})`}
-                        />
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* COLUNA DIREITA: INSPETOR DE PROTOCOLO RMI */}
-      <div className="card inspector-card">
-        <div className="inspector-header">
-          <div>
-            <h2 className="inspector-title">
-              <span>📡</span> Inspetor de Invocação Remota (RMI)
-            </h2>
-            <p className="inspector-subtitle">
-              Transporte HTTP Request/Reply • Client Stub (Proxy) ↔ Server Stub
-            </p>
-          </div>
-          <button onClick={() => setLogs([])} className="btn-secondary">
-            Limpar
-          </button>
-        </div>
-
-        <div className="logs-list">
-          {logs.length === 0 ? (
-            <p className="empty-logs">
-              Nenhuma invocação remota registrada ainda. Entre na partida para observar o tráfego RMI!
-            </p>
-          ) : (
-            logs.map((log) => (
-              <div key={log.id} className={`log-item log-${log.direction}`}>
-                <div className="log-meta">
-                  <span>
-                    {log.direction === 'OUT' && '📤 [CLIENT STUB - REQUEST]'}
-                    {log.direction === 'IN' && '📥 [SERVER STUB - RETURN]'}
-                    {log.direction === 'ERROR' && '❌ [REMOTE EXCEPTION]'}
-                  </span>
-                  <span>{log.timestamp}</span>
+                        </tbody>
+                    </table>
                 </div>
-                <div className="log-title">{log.title}</div>
-                <div className="log-payload">{log.payload}</div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-    </main>
-  );
+            </section>
+
+            <section className="lobby-create">
+                <h2>NOVA PARTIDA</h2>
+                <form onSubmit={handleCreateRoom} className="lobby-create-form">
+                    <label htmlFor="room-name">NOME DA SALA</label>
+                    <div className="lobby-create-controls">
+                        <input
+                            id="room-name"
+                            className="join-input"
+                            value={roomName}
+                            onChange={(event) => setRoomName(event.target.value)}
+                            placeholder="Digite o nome da sala"
+                            autoComplete="off"
+                            required
+                            disabled={creating}
+                        />
+                        <button className="btn-primary" type="submit" disabled={loading || creating || !roomName.trim()}>
+                            {creating ? 'CRIANDO...' : 'CRIAR SALA'}
+                        </button>
+                    </div>
+                </form>
+            </section>
+        </main>
+    );
 }
