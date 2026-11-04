@@ -163,6 +163,36 @@ function QuoridorRoom({ roomId }: { roomId: string }) {
     }
 
     /**
+     * Invoca o método remoto `rejoinGame(roomId, playerId)` para retomar o controle de um
+     * jogador que caiu.
+     *
+     * A identidade do jogador vive no `sessionStorage`, que é isolado por aba: fechar a aba
+     * (ou trocar de navegador/máquina) apaga o `playerId` e tornaria a reconexão impossível.
+     * Como o servidor já publica quem está OFFLINE no estado da partida, o cliente oferece
+     * esses assentos de volta — permitindo que o jogador retome a sessão de qualquer lugar,
+     * que é o comportamento esperado em um sistema distribuído.
+     */
+    function handleReconnect(playerId: string) {
+        void runAction(async (stub) => {
+            const state = await stub.rejoinGame(roomId, playerId);
+            if (!mountedRef.current) return;
+
+            const restored = state.players.find((p) => p.id === playerId);
+            if (!restored) {
+                throw new Error('Este jogador não pertence mais a esta sala.');
+            }
+
+            setMyPlayer(restored);
+            setGameState(state);
+            try {
+                sessionStorage.setItem(`quoridor_player_${roomId}`, JSON.stringify(restored));
+            } catch {
+                // Ignora caso sessionStorage esteja indisponível
+            }
+        });
+    }
+
+    /**
      * Invoca o método remoto `movePawn(roomId, playerId, row, col)` através do Client Stub.
      */
     function handleCellClick(row: number, col: number) {
@@ -223,6 +253,11 @@ function QuoridorRoom({ roomId }: { roomId: string }) {
         currentTurnPlayer?.id === myPlayer.id;
 
     const syncedMyPlayer = gameState?.players.find((p) => p.id === myPlayer?.id);
+
+    // Assentos que perderam conexão e ainda estão dentro da janela de reconexão.
+    // Jogadores já declarados ABANDONED viraram peões fantasmas e não retornam.
+    const disconnectedSeats =
+        gameState?.players.filter((p) => p.connectionStatus === 'OFFLINE') ?? [];
 
     return (
         <main className="main-container">
@@ -328,6 +363,32 @@ function QuoridorRoom({ roomId }: { roomId: string }) {
                                 </button>
                             </form>
                         )}
+
+                    {/* Retomada de sessão: invoca rejoinGame() para um assento caído */}
+                    {!myPlayer && disconnectedSeats.length > 0 && (
+                        <div className="rejoin-panel">
+                            <p className="rejoin-title">
+                                🔌 Retomar sessão
+                            </p>
+                            <p className="rejoin-hint">
+                                Estes jogadores perderam a conexão. Se um deles é você,
+                                retome sua partida de onde parou:
+                            </p>
+                            <div className="rejoin-list">
+                                {disconnectedSeats.map((p) => (
+                                    <button
+                                        key={p.id}
+                                        type="button"
+                                        className="btn-secondary rejoin-btn"
+                                        disabled={pending}
+                                        onClick={() => handleReconnect(p.id)}
+                                    >
+                                        Reconectar como <strong>{p.name}</strong> (Peão {p.color})
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Alerta de Exceções Remotas */}

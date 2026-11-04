@@ -967,3 +967,46 @@ button { font-family: inherit; }
   text-shadow: 0 0 8px rgba(255, 77, 109, 0.4);
   animation: blink 1.2s steps(2) infinite;
 }
+/* ===== RETOMADA DE SESSÃO (rejoinGame) =====
+   Painel exibido quando a aba não possui identidade mas existem assentos caídos.
+   Usa o laranja do Clyde para sinalizar "atenção/recuperação" sem competir com o
+   amarelo do Pac-Man, reservado às ações primárias. */
+.rejoin-panel {
+  margin-top: 1.25rem;
+  padding: 1rem 1.1rem;
+  background: rgba(255, 184, 71, 0.06);
+  border: 1px dashed var(--clyde-orange);
+  border-radius: 10px;
+}
+
+.rejoin-title {
+  font-family: var(--font-arcade);
+  font-size: 0.7rem;
+  color: var(--clyde-orange);
+  margin-bottom: 0.6rem;
+}
+
+.rejoin-hint {
+  font-family: var(--font-term);
+  font-size: 1.05rem;
+  color: var(--text-muted, #9aa0d0);
+  line-height: 1.35;
+  margin-bottom: 0.85rem;
+}
+
+.rejoin-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.rejoin-btn {
+  border-color: var(--clyde-orange);
+  color: var(--clyde-orange);
+}
+
+.rejoin-btn:hover:not(:disabled) {
+  background: rgba(255, 184, 71, 0.18);
+  border-color: var(--clyde-orange);
+  box-shadow: 0 0 12px rgba(255, 184, 71, 0.35);
+}
